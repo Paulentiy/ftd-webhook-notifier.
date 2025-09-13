@@ -1,51 +1,61 @@
 const express = require('express');
-const bodyParser = require('body-parser');
-const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
-
-const BOT_TOKEN = process.env.TELEGRAM_TOKEN;
-const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-
 const app = express();
-app.use(bodyParser.json({ type: '*/*' }));
 
-// Postback от партнёрки (или Keitaro-дублирование)
-app.post('/ftd-hook', async (req, res) => {
-  try {
-    const data = req.body || {};
-    const payout   = Number(data.payout || data.revenue || 0);
-    const currency = data.currency || data.currency_code || 'USD';
-    const status   = (data.status || '').toLowerCase();
-    const campaign = data.campaign || data.campaign_name || '—';
-    const offer    = data.offer || data.offer_name || '—';
-    const geo      = data.country || data.geo || '—';
-    const clickId  = data.clickid || data.click_id || '—';
+app.use(express.json({ type: '*/*' }));
+app.use(express.urlencoded({ extended: true }));
 
-    // считаем FTD только payout > 0
-    if (payout > 0) {
-      const msg =
-        `🎉 Новый депозит (FTD)\n` +
-        `Кампания: ${campaign}\n` +
-        `Оффер: ${offer}\n` +
-        `GEO: ${geo}\n` +
-        `Сумма: ${payout} ${currency}\n` +
-        `Статус: ${status}\n` +
-        `ClickID: ${clickId}`;
+function pick(obj, keys, def = '') {
+  for (const k of keys) if (obj && obj[k] != null && obj[k] !== '') return obj[k];
+  return def;
+}
 
-      for (const chatId of ADMIN_CHAT_IDS) {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ chat_id: chatId, text: msg })
-        });
-      }
+async function notify(data) {
+  console.log('[FTD-HOOK]', new Date().toISOString(), JSON.stringify(data));
+
+  const payout   = Number(pick(data, ['payout','revenue','amount'], 0));
+  if (!(payout > 0)) return;
+
+  const currency = pick(data, ['currency','currency_code'], 'USD');
+  const status   = String(pick(data, ['status','goal','state'], 'confirmed')).toLowerCase();
+  const clickId  = pick(data, ['clickid','click_id','sub_id','subid','sub_id1'], '—');
+
+  const text = [
+    '🎉 Новый депозит (FTD)',
+    `Сумма: ${payout} ${currency}`,
+    `Статус: ${status}`,
+    `ClickID: ${clickId}`
+  ].join('\n');
+
+  // ⚠️ отправка в TG
+  const token = process.env.TELEGRAM_TOKEN;
+  const chatIds = (process.env.ADMIN_CHAT_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!token || chatIds.length === 0) return;
+
+  const fetch = (await import('node-fetch')).default;
+  for (const chatId of chatIds) {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text })
+      });
+    } catch (e) {
+      console.error('TG send error:', e.message);
     }
+  }
+}
 
+// Один обработчик на GET/POST
+app.all('/ftd-hook', async (req, res) => {
+  try {
+    const data = Object.keys(req.body || {}).length ? req.body : req.query;
+    await notify(data);
     res.status(200).send('OK');
   } catch (e) {
-    console.error('Webhook error', e.message);
+    console.error('Webhook error:', e);
     res.status(500).send('ERR');
   }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log('Webhook server running on port', port));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log('Webhook server running on port', PORT));
