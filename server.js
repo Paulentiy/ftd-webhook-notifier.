@@ -26,12 +26,12 @@ async function notify(data) {
     `ClickID: ${clickId}`
   ].join('\n');
 
-  // ⚠️ отправка в TG
   const token = process.env.TELEGRAM_TOKEN;
-  const chatIds = (process.env.ADMIN_CHAT_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const chatIds = (process.env.ADMIN_CHAT_IDS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
   if (!token || chatIds.length === 0) return;
 
-  const fetch = (await import('node-fetch')).default;
+  const fetch = (await import('node-fetch')).default; // v3 ESM
   for (const chatId of chatIds) {
     try {
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -45,7 +45,6 @@ async function notify(data) {
   }
 }
 
-// Один обработчик на GET/POST
 app.all('/ftd-hook', async (req, res) => {
   try {
     const data = Object.keys(req.body || {}).length ? req.body : req.query;
